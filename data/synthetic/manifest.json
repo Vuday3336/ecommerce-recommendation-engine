@@ -1,0 +1,48 @@
+{
+  "generated_at": "2026-09-12T06:57:38.269715+00:00",
+  "generation_seconds": 19.18,
+  "config": {
+    "seed": 42,
+    "n_users": 10000,
+    "n_products": 5000,
+    "simulation_days": 180,
+    "start_date": "2026-03-05",
+    "end_date": "2026-09-01",
+    "user_mix": {
+      "high_value": 0.06,
+      "regular": 0.19,
+      "casual": 0.32,
+      "bargain_hunter": 0.12,
+      "window_shopper": 0.16,
+      "inactive": 0.15
+    },
+    "late_release_fraction": 0.12,
+    "late_signup_fraction": 0.18
+  },
+  "row_counts": {
+    "categories": 97,
+    "brands": 33,
+    "products": 5000,
+    "product_variants": 13763,
+    "users": 10000,
+    "user_sessions": 50970,
+    "events": 452591,
+    "orders": 11403,
+    "order_items": 17316,
+    "latent_user_profiles": 10000
+  },
+  "event_type_counts": {
+    "PRODUCT_VIEW": 186388,
+    "PRODUCT_CLICK": 86255,
+    "SESSION_START": 50970,
+    "SESSION_END": 50970,
+    "ADD_TO_CART": 29497,
+    "PURCHASE": 17316,
+    "SEARCH": 14322,
+    "REMOVE_FROM_CART": 5118,
+    "WISHLIST": 5019,
+    "PRODUCT_RATING": 4426,
+    "PRODUCT_REVIEW": 1548,
+    "PRODUCT_SHARE": 762
+  }
+}
