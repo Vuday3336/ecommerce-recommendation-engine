@@ -152,6 +152,16 @@ jobs:
         # full-scale numbers come from a deliberate training run.
         run: python data-generation/generate.py --users 700 --products 800 --days 90 --min-events 8000
 
+      - name: Seed the database
+        # Not optional. The seeder is real code on the critical path, and it has
+        # broken three times in ways only a live database exposed: pandas
+        # promoting a nullable integer column to float and emitting "1.0" for a
+        # BIGINT, `pd.NA` reaching COPY as the literal "<NA>", and two order
+        # lines for the same variant violating a unique constraint that was
+        # right. Without this step the tests that read seeded data skip, and CI
+        # would report green while never loading a single row.
+        run: python scripts/seed_database.py --truncate
+
       - name: Run tests
         run: |
           pytest -q \

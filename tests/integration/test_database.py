@@ -17,6 +17,7 @@ a machine without one.
 from __future__ import annotations
 
 import datetime as dt
+import json
 import os
 import sys
 import uuid
@@ -47,6 +48,37 @@ def _database_available() -> bool:
 
 pytestmark = pytest.mark.skipif(
     not _database_available(), reason="no PostgreSQL reachable"
+)
+
+
+def _database_seeded() -> bool:
+    """Does the database contain the synthetic dataset?
+
+    A migrated-but-empty database is a legitimate state - it is what CI gets
+    after `alembic upgrade head`, and what a developer gets before their first
+    seed. Tests that assert row counts or sequence positions are asserting a
+    *precondition* they never checked, so on an empty database they failed with
+    "expected 10,000 users, got 0", which reads as data loss rather than as
+    "nothing has been loaded yet".
+
+    Checking `products` rather than `user_events`: the event log is partitioned
+    and also written by the API during this very suite, so it is non-empty even
+    when nothing has been seeded.
+    """
+    try:
+        from app.db.session import session_scope
+        from sqlalchemy import text
+
+        with session_scope() as db:
+            return bool(db.execute(text("SELECT 1 FROM products LIMIT 1")).first())
+    except Exception:
+        return False
+
+
+#: Applied to tests that read the seeded dataset rather than writing their own.
+requires_seed = pytest.mark.skipif(
+    not _database_seeded(),
+    reason="database is migrated but not seeded - run scripts/seed_database.py",
 )
 
 
@@ -199,6 +231,7 @@ class TestConstraints:
 
 
 class TestPartitioning:
+    @requires_seed
     def test_events_are_routed_into_monthly_partitions(self, session):
         from sqlalchemy import text
 
@@ -216,7 +249,27 @@ class TestPartitioning:
         ).all()
         populated = [name for name, size in rows if size > 8192]
         assert len(rows) >= 12, "monthly partitions were not created"
-        assert len(populated) >= 5, "events did not spread across partitions"
+
+        # Derive the expectation from the data rather than hardcoding it. The
+        # invariant is "every month that has events has a populated partition",
+        # which holds at any scale; `>= 5` silently encoded "180 days of data"
+        # and failed on a 90-day dataset that was routed perfectly correctly.
+        span = session.execute(
+            text("SELECT min(occurred_at), max(occurred_at) FROM user_events")
+        ).first()
+        months = {
+            (span[0].year, span[0].month),
+            (span[1].year, span[1].month),
+        }
+        cursor = dt.datetime(span[0].year, span[0].month, 1, tzinfo=span[0].tzinfo)
+        while cursor < span[1]:
+            months.add((cursor.year, cursor.month))
+            cursor = (cursor.replace(day=28) + dt.timedelta(days=4)).replace(day=1)
+
+        assert len(populated) >= len(months), (
+            f"events span {len(months)} months but only {len(populated)} "
+            f"partitions hold data: {populated}"
+        )
 
     def test_the_default_partition_is_empty(self, session):
         """A row here means a month range is missing, and PostgreSQL will then
@@ -294,17 +347,50 @@ class TestIndexUsage:
         assert "Index Scan" in plan, plan
 
 
+@requires_seed
 class TestSeededData:
     def test_the_expected_volumes_are_present(self, session):
         from sqlalchemy import text
 
-        counts = {
-            table: session.execute(text(f"SELECT count(*) FROM {table}")).scalar()
-            for table in ("users", "products", "user_events", "orders", "order_items")
-        }
-        assert counts["users"] >= 10_000
-        assert counts["products"] >= 5_000
-        assert counts["user_events"] >= 100_000
+        # Checked against the generator's own manifest instead of full-scale
+        # constants. This is a stronger assertion, not a weaker one: "every row
+        # the generator produced reached the database" catches a partial load,
+        # which `>= 10_000` would happily pass with 90% of the data missing. It
+        # also holds at any scale, so CI can seed a small dataset and still run
+        # this test rather than skipping it.
+        manifest = json.loads(
+            (REPO_ROOT / "data" / "synthetic" / "manifest.json").read_text(encoding="utf-8")
+        )
+        expected = manifest["row_counts"]
+
+        def count(table: str) -> int:
+            return session.execute(text(f"SELECT count(*) FROM {table}")).scalar()
+
+        # Tables nothing else writes must match the manifest *exactly*. Equality
+        # is the point: `>=` would pass a load that silently dropped 90% of the
+        # rows, which is the failure this test exists to catch.
+        for table in ("products", "orders", "order_items"):
+            actual = count(table)
+            assert actual == expected[table], (
+                f"{table}: database has {actual:,}, the manifest declares "
+                f"{expected[table]:,} - the load was partial"
+            )
+
+        # These three grow during the run, so they can only be bounded below.
+        # `users` gains the accounts the auth tests register; `user_events`
+        # gains the events posted through the API; `user_sessions` gains the
+        # sessions the ingestion path now creates for those events. Asserting
+        # equality here would make the suite fail depending on which tests ran
+        # first, which is worse than a weaker assertion.
+        for table, key in (
+            ("users", "users"),
+            ("user_events", "events"),
+            ("user_sessions", "user_sessions"),
+        ):
+            actual = count(table)
+            assert actual >= expected[key], (
+                f"{table} has {actual:,}, fewer than the {expected[key]:,} seeded"
+            )
 
     def test_no_orphan_event_references(self, session):
         """`user_events` has no foreign keys by design (throughput), so this is
