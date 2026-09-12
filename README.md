@@ -70,10 +70,19 @@ No database or Docker required — the ML stack reads Parquet, so everything bel
 works on a bare Python install.
 
 ```bash
-python -m venv .venv && .venv/Scripts/python.exe -m pip install -r backend/requirements.txt -r ml/requirements.txt
+python -m venv .venv && .venv/Scripts/python.exe -m pip install -r backend/requirements.txt -r ml/requirements.txt -r requirements-dev.txt
 ```
 
-Copy `.env.example` to `.env` and set `JWT_SECRET_KEY`. Then:
+On macOS or Linux the interpreter is `.venv/bin/python`; everything else below
+is identical.
+
+Copy `.env.example` to `.env` and set `JWT_SECRET_KEY`:
+
+```bash
+python -c "import secrets; print('JWT_SECRET_KEY=' + secrets.token_urlsafe(64))"
+```
+
+Then generate the dataset and train:
 
 ```bash
 python data-generation/generate.py && python data-generation/diagnostics.py
@@ -97,13 +106,30 @@ Open **http://localhost:5173**. Change the user id in the top-right corner to
 see the recommendations change; toggle **diagnostics** to see the score, source
 and latency behind every item.
 
-To add a database (still no Docker, no admin rights needed):
+Without a database, events are accepted and counted but held in memory, so they
+are lost on restart. The API reports that honestly at `/health/ready`
+(`"database": false`). Everything else — every recommendation surface, training,
+evaluation, MLflow, drift detection — works.
+
+To add a database (still no Docker, and no administrator rights):
+
+```bash
+pip install -r requirements-local-db.txt
+```
 
 ```bash
 python scripts/local_postgres.py start && cd backend && alembic upgrade head && cd .. && python scripts/seed_database.py --truncate && python scripts/verify_database.py
 ```
 
-With Docker (see [deployment.md §7](docs/deployment.md) for the caveat):
+That takes about a minute and unlocks event persistence, the analytics
+endpoints and the database test suite. `stop`, `status` and `destroy` do what
+they say. Then measure the serving path:
+
+```bash
+python scripts/benchmark_serving.py
+```
+
+With Docker instead (see [deployment.md §7](docs/deployment.md) for the caveat):
 
 ```bash
 docker compose up -d

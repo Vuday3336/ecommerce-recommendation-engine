@@ -35,6 +35,7 @@ jobs:
           cache: pip
 
       - name: Install tooling
+        # Only the linters: this job exists to fail in under a minute.
         run: pip install ruff mypy
 
       - name: Ruff
@@ -115,7 +116,7 @@ jobs:
         run: |
           pip install -r backend/requirements.txt
           pip install -r ml/requirements.txt
-          pip install pytest pytest-cov fakeredis httpx
+          pip install -r requirements-dev.txt
 
       - name: Apply migrations
         working-directory: backend

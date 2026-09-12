@@ -1,0 +1,22 @@
+# A local PostgreSQL, for machines that cannot run Docker Compose.
+#
+#     pip install -r requirements-local-db.txt
+#     python scripts/local_postgres.py start
+#
+# `embedded-postgres` ships PostgreSQL 18 with pgvector as a wheel and runs it
+# from a user-writable directory, needing no container runtime and no
+# administrator rights (ADR-016).
+#
+# This is a *developer loop*, not a change of architecture. It is the same
+# PostgreSQL, the same extension, the same migration and the same connection
+# string - only the packaging differs, so nothing in the application knows or
+# cares which one it is talking to. The Compose definition remains the
+# deployment target, and CI uses a service container.
+#
+# It is a separate file because it is the one dependency here that is neither
+# needed in CI nor in any image, and it is a large download. Installing it by
+# default would slow down every job that has a perfectly good database already.
+#
+# Wheels exist for win_amd64, manylinux and macOS. If your platform has none,
+# use `docker compose up -d postgres` instead; nothing else changes.
+embedded-postgres>=18.0

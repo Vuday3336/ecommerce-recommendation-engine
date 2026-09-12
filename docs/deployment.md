@@ -12,7 +12,7 @@ Everything except event persistence works with no database and no container
 runtime. This is the fastest way to see the system running.
 
 ```bash
-python -m venv .venv && .venv/Scripts/python.exe -m pip install -r backend/requirements.txt -r ml/requirements.txt
+python -m venv .venv && .venv/Scripts/python.exe -m pip install -r backend/requirements.txt -r ml/requirements.txt -r requirements-dev.txt
 ```
 
 ```bash
@@ -45,7 +45,12 @@ are lost on restart. The API reports this honestly at `/health/ready`
 ### Adding a database, still without Docker
 
 `embedded-postgres` ships PostgreSQL 18 with pgvector as a pip wheel and needs
-no administrator rights (ADR-016):
+no administrator rights (ADR-016). It is kept in its own requirements file
+because it is a large download that neither CI nor any image needs:
+
+```bash
+pip install -r requirements-local-db.txt
+```
 
 ```bash
 python scripts/local_postgres.py start && cd backend && alembic upgrade head && cd .. && python scripts/seed_database.py --truncate && python scripts/verify_database.py
