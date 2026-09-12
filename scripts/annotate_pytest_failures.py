@@ -29,6 +29,13 @@ from pathlib import Path
 #: anyway. The first failure's traceback is almost always the informative one.
 MAX_TRACEBACK_CHARS = 6000
 
+#: GitHub keeps at most 10 annotations per step and silently drops the rest.
+#: That is why the traceback is emitted *first* and the per-test lines are
+#: capped below it: on the first run of this script the budget was spent on
+#: summary lines and the traceback - the only part that actually explains the
+#: failure - was the one thing discarded.
+MAX_SUMMARY_ANNOTATIONS = 8
+
 
 def escape(text: str) -> str:
     """Encode a multi-line message for a workflow command.
@@ -45,11 +52,25 @@ def escape(text: str) -> str:
 
 
 def summary_lines(output: str) -> list[str]:
-    """The one-line-per-failure summary pytest prints at the end."""
+    """The one-line-per-failure summary pytest prints at the end.
+
+    Read from the "short test summary info" section specifically, not by
+    scanning the whole output for lines starting with FAILED or ERROR. The
+    naive version matched pytest's *captured log records* too - a test that
+    logs `ERROR  app.main:main.py:194 unhandled error` produces a line starting
+    with ERROR that is output, not a result. Seven of those consumed the
+    annotation budget and pushed out the traceback.
+    """
+    section = re.search(
+        r"=+ short test summary info =+\n(.*?)(?:\n=+ .* =+|\Z)", output, re.S
+    )
+    if not section:
+        return []
     return [
         line.strip()
-        for line in output.splitlines()
-        if line.startswith(("FAILED", "ERROR"))
+        for line in section.group(1).splitlines()
+        # A result line names a test node; a log record does not.
+        if line.startswith(("FAILED", "ERROR")) and "::" in line
     ]
 
 
@@ -77,12 +98,21 @@ def main() -> int:
 
     text = args.output.read_text(encoding="utf-8", errors="replace")
 
-    for line in summary_lines(text):
-        print(f"::error::{escape(line)}")
-
+    # Traceback first: it is the annotation that explains the failure, and the
+    # 10-per-step cap means whatever is emitted last is what gets dropped.
     traceback = first_traceback(text)
     if traceback:
         print(f"::error title=pytest traceback::{escape(traceback)}")
+
+    failures = summary_lines(text)
+    for line in failures[:MAX_SUMMARY_ANNOTATIONS]:
+        print(f"::error::{escape(line)}")
+    if len(failures) > MAX_SUMMARY_ANNOTATIONS:
+        remaining = len(failures) - MAX_SUMMARY_ANNOTATIONS
+        print(f"::error::and {remaining} more failure(s) - see the pytest-output artifact")
+
+    if not traceback and not failures:
+        print("::error::pytest failed but produced no recognisable summary")
 
     return 0
 
