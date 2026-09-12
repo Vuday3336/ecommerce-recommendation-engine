@@ -1,0 +1,70 @@
+{
+  // Ctrl+Shift+P → "Tasks: Run Task" to pick one of these.
+  "version": "2.0.0",
+  "tasks": [
+    {
+      // A background task: VS Code needs `isBackground` plus a problem matcher
+      // that knows when Vite is ready, otherwise a compound launch waits
+      // forever for a dev server that never "finishes".
+      "label": "storefront: dev server",
+      "type": "shell",
+      "command": "npm run dev",
+      "options": { "cwd": "${workspaceFolder}/frontend" },
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "vite",
+        "pattern": { "regexp": "^$" },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".*VITE.*",
+          "endsPattern": ".*Local:.*"
+        }
+      },
+      "presentation": { "reveal": "always", "panel": "dedicated" }
+    },
+    {
+      "label": "storefront: install dependencies",
+      "type": "shell",
+      "command": "npm install",
+      "options": { "cwd": "${workspaceFolder}/frontend" },
+      "problemMatcher": []
+    },
+    {
+      "label": "python: install everything",
+      "type": "shell",
+      "command": "${workspaceFolder}/.venv/Scripts/python.exe -m pip install -r backend/requirements.txt -r ml/requirements.txt -r requirements-dev.txt",
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
+      "label": "tests: run all",
+      "type": "shell",
+      "command": "${workspaceFolder}/.venv/Scripts/python.exe -m pytest -q",
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": { "kind": "test", "isDefault": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "lint: ruff",
+      "type": "shell",
+      "command": "${workspaceFolder}/.venv/Scripts/python.exe -m ruff check .",
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
+      "label": "mlflow: open the UI",
+      "type": "shell",
+      "command": "${workspaceFolder}/.venv/Scripts/python.exe -m mlflow ui --backend-store-uri sqlite:///ml/mlflow.db --port 5000",
+      "options": { "cwd": "${workspaceFolder}" },
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "database: apply migrations",
+      "type": "shell",
+      "command": "${workspaceFolder}/.venv/Scripts/python.exe -m alembic upgrade head",
+      "options": { "cwd": "${workspaceFolder}/backend" },
+      "problemMatcher": []
+    }
+  ]
+}

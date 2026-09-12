@@ -1,0 +1,49 @@
+{
+  // Point VS Code at the project virtualenv rather than whatever Python it
+  // finds first. Without this the editor reports import errors for packages
+  // that are installed - in the venv it is not looking at.
+  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/Scripts/python.exe",
+
+  // The three importable roots of the monorepo. This is what makes `from app
+  // import ...` and `from recsys import ...` resolve in the editor; it mirrors
+  // the `pythonpath` entry in pyproject.toml that does the same for pytest.
+  "python.analysis.extraPaths": ["backend", "ml", "data-generation"],
+  "python.analysis.typeCheckingMode": "basic",
+
+  "python.testing.pytestEnabled": true,
+  "python.testing.unittestEnabled": false,
+  "python.testing.pytestArgs": ["."],
+
+  "[python]": {
+    "editor.defaultFormatter": "charliermarsh.ruff",
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": { "source.organizeImports.ruff": "explicit" }
+  },
+
+  "[typescript]": { "editor.defaultFormatter": "esbenp.prettier-vscode" },
+  "[typescriptreact]": { "editor.defaultFormatter": "esbenp.prettier-vscode" },
+
+  // Keep the file tree readable. These are all generated or local-only.
+  "files.exclude": {
+    "**/__pycache__": true,
+    "**/.pytest_cache": true,
+    "**/.ruff_cache": true,
+    "**/.mypy_cache": true,
+    "**/*.egg-info": true,
+    ".pgdata": true,
+    "frontend/node_modules": true
+  },
+
+  // Searching should not return 500k rows of synthetic Parquet or a lockfile.
+  "search.exclude": {
+    "**/.venv": true,
+    "**/node_modules": true,
+    "data/synthetic": true,
+    "ml/artifacts": true,
+    "mlruns": true,
+    "frontend/package-lock.json": true
+  },
+
+  "files.trimTrailingWhitespace": true,
+  "files.insertFinalNewline": true
+}

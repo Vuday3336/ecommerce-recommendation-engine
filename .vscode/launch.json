@@ -1,0 +1,129 @@
+{
+  // Run configurations for VS Code. Press F5, or pick one from the Run and
+  // Debug panel (Ctrl+Shift+D).
+  //
+  // `PYTHONPATH` is set on every entry because this is a monorepo with three
+  // importable roots - `backend` (the `app` package), `ml` (the `recsys`
+  // package) and `data-generation` - and none of them is installed. Setting it
+  // here means no editable install to keep in sync, and it matches what
+  // `pyproject.toml` already tells pytest.
+  "version": "0.2.0",
+  "configurations": [
+    {
+      // Start here on a fresh clone. ~30 seconds.
+      "name": "1 · Generate the dataset",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/data-generation/generate.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "env": { "PYTHONPATH": "${workspaceFolder};${workspaceFolder}/backend;${workspaceFolder}/ml;${workspaceFolder}/data-generation" }
+    },
+    {
+      // The gate. Must print PHASE 2 GATE: PASSED - it checks the generated
+      // data actually contains learnable structure. If this fails, nothing
+      // downstream of it means anything.
+      "name": "2 · Check the data is learnable",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/data-generation/diagnostics.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "env": { "PYTHONPATH": "${workspaceFolder};${workspaceFolder}/backend;${workspaceFolder}/ml;${workspaceFolder}/data-generation" }
+    },
+    {
+      // ~8 minutes. Trains and compares all 13 variants, writes artefacts to
+      // ml/artifacts/ and logs runs to MLflow.
+      "name": "3 · Train all models",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/ml/pipelines/train.py",
+      "args": ["--mlflow"],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "env": { "PYTHONPATH": "${workspaceFolder};${workspaceFolder}/backend;${workspaceFolder}/ml;${workspaceFolder}/data-generation" }
+    },
+    {
+      // The API, with the reloader deliberately OFF. uvicorn's `--reload`
+      // spawns the application in a subprocess the debugger is not attached
+      // to, so breakpoints silently never hit and it looks like the debugger
+      // is broken. `justMyCode: false` lets you step into FastAPI and
+      // SQLAlchemy, which is usually where the surprise actually is.
+      "name": "4 · Run the API (with breakpoints)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": ["app.main:app", "--host", "127.0.0.1", "--port", "8000"],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "env": { "PYTHONPATH": "${workspaceFolder};${workspaceFolder}/backend;${workspaceFolder}/ml" },
+      "justMyCode": false
+    },
+    {
+      "name": "Run the API (auto-reload, no breakpoints)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": ["app.main:app", "--host", "127.0.0.1", "--port", "8000", "--reload"],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "env": { "PYTHONPATH": "${workspaceFolder};${workspaceFolder}/backend;${workspaceFolder}/ml" }
+    },
+    {
+      "name": "Start local PostgreSQL",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/scripts/local_postgres.py",
+      "args": ["start"],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "env": { "PYTHONPATH": "${workspaceFolder};${workspaceFolder}/backend;${workspaceFolder}/ml" }
+    },
+    {
+      "name": "Seed the database",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/scripts/seed_database.py",
+      "args": ["--truncate"],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "env": { "PYTHONPATH": "${workspaceFolder};${workspaceFolder}/backend;${workspaceFolder}/ml" }
+    },
+    {
+      "name": "Verify the database (24 checks)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/scripts/verify_database.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "env": { "PYTHONPATH": "${workspaceFolder};${workspaceFolder}/backend;${workspaceFolder}/ml" }
+    },
+    {
+      "name": "Benchmark the serving path",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/scripts/benchmark_serving.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "env": { "PYTHONPATH": "${workspaceFolder};${workspaceFolder}/backend;${workspaceFolder}/ml" }
+    },
+    {
+      "name": "Check the environment",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/scripts/check_environment.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "env": { "PYTHONPATH": "${workspaceFolder};${workspaceFolder}/backend;${workspaceFolder}/ml" }
+    }
+  ],
+  "compounds": [
+    {
+      // The everyday loop: API under the debugger, storefront beside it.
+      "name": "API + storefront",
+      "configurations": ["4 · Run the API (with breakpoints)"],
+      "preLaunchTask": "storefront: dev server",
+      "stopAll": true
+    }
+  ]
+}

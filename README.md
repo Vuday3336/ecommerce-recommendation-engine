@@ -106,6 +106,31 @@ Open **http://localhost:5173**. Change the user id in the top-right corner to
 see the recommendations change; toggle **diagnostics** to see the score, source
 and latency behind every item.
 
+### Running it in VS Code
+
+Open the folder and press **F5**. The Run and Debug panel (`Ctrl+Shift+D`)
+lists the entry points in the order they need to happen, so "which file do I
+run first" is answerable without reading this file:
+
+| Configuration | Runs |
+| --- | --- |
+| **1 - Generate the dataset** | `data-generation/generate.py` |
+| **2 - Check the data is learnable** | `data-generation/diagnostics.py` |
+| **3 - Train all models** | `ml/pipelines/train.py --mlflow` |
+| **4 - Run the API (with breakpoints)** | `uvicorn app.main:app` |
+| **API + storefront** | the API under the debugger, with the Vite dev server beside it |
+
+The API configuration runs **without** `--reload` on purpose: uvicorn's
+reloader spawns the application in a subprocess the debugger is not attached
+to, so breakpoints silently never hit and it looks like the debugger itself is
+broken. A separate auto-reload configuration exists for when you are not
+debugging.
+
+`Ctrl+Shift+P` then **Tasks: Run Task** covers the rest - installing
+dependencies, the test suite, ruff, migrations and the MLflow UI.
+
+---
+
 Without a database, events are accepted and counted but held in memory, so they
 are lost on restart. The API reports that honestly at `/health/ready`
 (`"database": false`). Everything else — every recommendation surface, training,

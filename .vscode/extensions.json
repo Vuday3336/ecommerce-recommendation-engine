@@ -1,0 +1,14 @@
+{
+  // VS Code offers these on first open of the folder. Nothing here is
+  // required to run the project - they are what makes the editor agree with
+  // what CI already enforces.
+  "recommendations": [
+    "ms-python.python",
+    "ms-python.debugpy",
+    "charliermarsh.ruff",
+    "dbaeumer.vscode-eslint",
+    "esbenp.prettier-vscode",
+    "bradlc.vscode-tailwindcss",
+    "ms-azuretools.vscode-docker"
+  ]
+}

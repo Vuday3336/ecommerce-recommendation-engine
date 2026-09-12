@@ -56,7 +56,14 @@ grafana-data/
 
 # --- Editors / OS ------------------------------------------------------------
 .idea/
-.vscode/
+
+# VS Code: the run configurations are part of the project, not personal
+# preference - "which file do I run first" should be answerable from the Run
+# panel rather than from a README. Personal per-user state is still ignored.
+.vscode/*
+!.vscode/launch.json
+!.vscode/tasks.json
+!.vscode/settings.json
 !.vscode/extensions.json
 .DS_Store
 Thumbs.db
