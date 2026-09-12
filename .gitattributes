@@ -1,0 +1,35 @@
+# Normalise line endings on the way into the repository.
+#
+# This repository is developed on Windows and built inside Linux containers.
+# Without this, whether a file is stored with CRLF depends on each contributor's
+# `core.autocrlf` setting, which is not something the repository should be at
+# the mercy of. The concrete failure is quiet and confusing: a shell script or
+# an entrypoint with CRLF fails inside a container with `no such file or
+# directory`, naming an interpreter that is plainly there - because the `\r` is
+# part of the path being looked up.
+* text=auto eol=lf
+
+# Files that are executed inside a container, where CRLF is not survivable.
+*.sh            text eol=lf
+*.sql           text eol=lf
+Dockerfile      text eol=lf
+*.Dockerfile    text eol=lf
+*.conf          text eol=lf
+
+# Binary: never translate, never diff as text.
+*.png           binary
+*.jpg           binary
+*.jpeg          binary
+*.gif           binary
+*.ico           binary
+*.woff          binary
+*.woff2         binary
+*.parquet       binary
+*.pkl           binary
+*.joblib        binary
+*.npz           binary
+*.db            binary
+
+# Generated: collapse in pull-request diffs so a lockfile bump does not bury
+# the change it accompanies. Still tracked, still reviewable on demand.
+frontend/package-lock.json  linguist-generated=true -diff
