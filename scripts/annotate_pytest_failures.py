@@ -74,8 +74,46 @@ def summary_lines(output: str) -> list[str]:
     ]
 
 
+def strip_framework_frames(body: str) -> str:
+    """Drop stack frames from installed packages.
+
+    A FastAPI request traceback is mostly starlette and fastapi frames
+    describing how ASGI middleware calls itself. None of it is actionable, and
+    it is what pushes the application frames - and the exception - past the
+    length limit.
+    """
+    kept: list[str] = []
+    skipping = False
+    for line in body.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("File "):
+            skipping = "site-packages" in stripped or "/lib/python" in stripped
+            if skipping:
+                continue
+        elif skipping:
+            # Drop only the frame's own continuation - its source line and
+            # caret, which are indented under the `File` line. Indentation is
+            # the discriminator that matters: the exception that ends a
+            # traceback ("KeyError: 'price_band'") sits at column 0, and an
+            # earlier version that skipped every line until the next `File`
+            # swallowed exactly that line - producing an annotation with a
+            # tidy stack and no error in it.
+            if line.startswith((" ", "\t")):
+                continue
+            skipping = False
+        kept.append(line)
+    return "\n".join(kept)
+
+
 def first_traceback(output: str) -> str | None:
-    """The FAILURES section, which holds the actual assertion and traceback."""
+    """The FAILURES section, which holds the actual assertion and traceback.
+
+    Truncated from the **front**, not the back. An exception's type and message
+    are the last lines of a traceback, so keeping the first N characters keeps
+    the part that says how the call got there and discards the part that says
+    what went wrong - which is how the first version of this produced an
+    annotation ending mid-frame, with no exception in it at all.
+    """
     match = re.search(
         r"=+ FAILURES =+\n(.*?)(?:\n=+ (?:warnings summary|short test summary|ERRORS))",
         output,
@@ -83,8 +121,12 @@ def first_traceback(output: str) -> str | None:
     )
     if not match:
         return None
-    body = match.group(1).strip()
-    return body[:MAX_TRACEBACK_CHARS] if body else None
+    body = strip_framework_frames(match.group(1).strip())
+    if not body:
+        return None
+    if len(body) <= MAX_TRACEBACK_CHARS:
+        return body
+    return "[earlier frames omitted]\n" + body[-MAX_TRACEBACK_CHARS:]
 
 
 def main() -> int:
