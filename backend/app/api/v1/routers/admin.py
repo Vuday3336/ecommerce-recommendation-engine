@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Annotated, Any
 
 import pandas as pd
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, Query, Request
 
 from app.api.deps import get_engine, require_analyst
 from app.core.config import settings
@@ -33,13 +33,39 @@ AnalystDep = Annotated[Principal, Depends(require_analyst)]
 
 
 def _artifact_dir() -> Path:
+    """Where trained artefacts live. Missing is a state, not an error.
+
+    This used to raise 404 when the directory did not exist, which was wrong in
+    two ways.
+
+    It was **incoherent**: if the directory existed but a file inside it was
+    missing, `_read_json` and `_read_csv` already returned an empty result and
+    the endpoint answered 200. So the same semantic state - nothing has been
+    trained yet - produced 200 or 404 depending only on whether an empty folder
+    happened to exist on disk.
+
+    It was also the **wrong status**. 404 on a collection endpoint means "no
+    such route", so a client cannot distinguish a deployment or routing mistake
+    from "there is nothing here yet". The admin dashboard is precisely the
+    surface that has to render an empty state before the first training run,
+    and it would have shown a routing error instead.
+
+    The endpoints now answer 200 and say `"trained": false` - the same
+    convention `/health/ready` already uses when it reports `"database": false`
+    rather than failing.
+    """
+    return Path(settings.artifact_dir)
+
+
+def _artifacts_present() -> bool:
+    """Has a training run actually produced anything to report?
+
+    The directory alone is not enough: it is a mounted volume in Compose and is
+    created empty. `metrics.json` is written at the end of a successful run, so
+    its presence is the honest signal that there is something to show.
+    """
     directory = Path(settings.artifact_dir)
-    if not directory.exists():
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"no model artefacts at {directory}",
-        )
-    return directory
+    return directory.exists() and (directory / "metrics.json").exists()
 
 
 def _read_json(name: str) -> dict[str, Any]:
@@ -75,6 +101,9 @@ def model_performance() -> dict[str, Any]:
     """
     metrics = _read_json("metrics.json")
     return {
+        # Explicit, so the dashboard can render "no model trained yet" instead
+        # of an empty table that looks like a model with no results.
+        "trained": _artifacts_present(),
         "comparison": _read_csv("evaluation.csv"),
         "by_segment": _read_csv("evaluation_by_segment.csv"),
         "weight_calibration": _read_csv("weight_calibration.csv"),
@@ -97,6 +126,7 @@ def monitoring(request: Request) -> dict[str, Any]:
     config = _read_json("config.json")
 
     return {
+        "trained": _artifacts_present(),
         "model": {
             "name": settings.model_name,
             "version": engine.model_version,
@@ -141,7 +171,12 @@ def drift(
 
     reference_path = _artifact_dir() / "user_features.parquet"
     if not reference_path.exists():
-        return {"features": [], "should_retrain": False, "reason": "no reference snapshot"}
+        return {
+            "trained": False,
+            "features": [],
+            "should_retrain": False,
+            "reason": "no reference snapshot",
+        }
 
     engine = get_engine(request)
     reference = pd.read_parquet(reference_path)
@@ -152,6 +187,7 @@ def drift(
     detector.export_metrics(report)
 
     payload = report.to_dict()
+    payload["trained"] = True
     payload["features"] = payload["features"][:limit]
     return payload
 

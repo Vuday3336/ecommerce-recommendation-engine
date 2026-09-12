@@ -5,7 +5,7 @@ engineering, five recommendation strategies, two-stage retrieve-then-rank, a
 React storefront and admin dashboard, MLflow model management, A/B testing,
 drift detection and an automated retraining loop.
 
-**~21,000 lines of Python · 246 passing tests · 13 model variants evaluated with
+**~21,000 lines of Python · 253 passing tests · 13 model variants evaluated with
 significance testing**
 
 ---
@@ -271,9 +271,9 @@ pytest -q
 | Suite | Tests | Covers |
 | --- | --- | --- |
 | `ml/tests` | 51 | Metrics, leakage guards, weight calibration, drift, promotion gate |
-| `backend/tests` | 129 | Schema invariants, API contracts, auth, event sink, experiments, analytics |
+| `backend/tests` | 136 | Schema invariants, API contracts, auth, event sink, experiments, analytics |
 | `tests/` | 67 | Data generation, end-to-end flow, degradation ladder, latency, **live database** |
-| **total** | **247** | 246 run; one asserts the API works *without* Postgres and skips when it is present |
+| **total** | **254** | 253 run; one asserts the API works *without* Postgres and skips when it is present |
 
 Tests that earned their place by catching real bugs:
 
@@ -284,6 +284,9 @@ Tests that earned their place by catching real bugs:
 - **Orphan-reference check** — found that the live ingestion path never created
   the `user_sessions` row its events pointed at, which would have left session
   based cold-start retrieval with nothing to read in production
+- **CI on a small dataset** — found that three admin endpoints returned 404
+  before the first training run, so a fresh deployment's dashboard would have
+  shown a routing error on the one screen meant to say "nothing trained yet"
 - **Degradation ladder** — removes the ranker and asserts the API still answers
 - **Feature-order check** — a silent reordering between training and serving
   would feed the model scrambled inputs with no error anywhere

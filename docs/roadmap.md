@@ -15,7 +15,7 @@ done on the basis of "should work".
 
 ## 1. Phase table
 
-Status as of 2026-09-12. **246 tests pass; ruff is clean.**
+Status as of 2026-09-12. **253 tests pass; ruff is clean.**
 
 | # | Phase | Status | Evidence |
 | --- | --- | --- | --- |
@@ -36,7 +36,7 @@ Status as of 2026-09-12. **246 tests pass; ruff is clean.**
 | 15 | A/B testing | Complete | Deterministic assignment, holdout, SRM check, significance readout |
 | 16 | Monitoring and drift | Complete | 30+ Prometheus metrics, 11 alert rules, 3 Grafana dashboards (28 panels), drift verified firing |
 | 17 | Docker and CI/CD | **Written; compose validates, containers unrun** | 3 Dockerfiles, 8-service compose (`docker compose config` passes), 6-job CI, retrain workflow. Container execution needs WSL2 |
-| 18 | Testing | Complete | **246 tests**: 51 ML, 129 backend, 66 integration (incl. 26 database) |
+| 18 | Testing | Complete | **253 tests**: 51 ML, 136 backend, 66 integration (incl. 26 database) |
 | 19 | Retraining pipeline | Complete | Drift check verified; **a forced retrain was correctly rejected by the gate** and the incumbent kept serving |
 | 20 | Documentation | Complete | 11 documents, ~4,200 lines, 16 ADRs |
 

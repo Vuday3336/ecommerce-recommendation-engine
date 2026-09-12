@@ -272,6 +272,72 @@ class TestEventIngestion:
         assert response.status_code == 422
 
 
+class TestAdminBeforeAnyTrainingRun:
+    """The admin surface must work before a model exists.
+
+    Regression test for a bug CI found: these endpoints raised 404 when the
+    artefact directory was absent. A fresh deployment - and every CI run, which
+    never trains - is exactly that state, so the dashboard would have shown a
+    routing error on the one screen whose job is to say "nothing trained yet".
+
+    404 is also the wrong signal on a collection: it means "no such route", so
+    a client cannot tell a broken deploy from an empty system.
+    """
+
+    ADMIN_PATHS: ClassVar[list[str]] = [
+        "/api/v1/admin/models",
+        "/api/v1/admin/monitoring",
+        "/api/v1/admin/drift",
+    ]
+
+    @pytest.mark.parametrize("path", ADMIN_PATHS)
+    def test_the_endpoint_answers_200_with_no_artefacts(
+        self, client, analyst_token, artifacts_available, path, monkeypatch, tmp_path
+    ):
+        from app.core.config import settings
+
+        # Point at a directory that certainly does not exist, so the test is
+        # meaningful whether or not this machine happens to have trained.
+        monkeypatch.setattr(settings, "artifact_dir", str(tmp_path / "nope"), raising=False)
+
+        response = client.get(path, headers={"Authorization": f"Bearer {analyst_token}"})
+        assert response.status_code == 200, response.text
+
+    @pytest.mark.parametrize("path", ADMIN_PATHS)
+    def test_the_response_says_it_is_untrained_rather_than_looking_empty(
+        self, client, analyst_token, path, monkeypatch, tmp_path
+    ):
+        """An empty table and an untrained system must not look identical."""
+        from app.core.config import settings
+
+        monkeypatch.setattr(settings, "artifact_dir", str(tmp_path / "nope"), raising=False)
+
+        payload = client.get(
+            path, headers={"Authorization": f"Bearer {analyst_token}"}
+        ).json()
+        assert payload["trained"] is False
+
+    def test_an_existing_but_empty_directory_is_also_untrained(
+        self, client, analyst_token, monkeypatch, tmp_path
+    ):
+        """The original bug was that these two states answered differently.
+
+        Compose mounts the artefact directory, so it exists and is empty on a
+        first run. That must report exactly the same as no directory at all.
+        """
+        from app.core.config import settings
+
+        empty = tmp_path / "artifacts"
+        empty.mkdir()
+        monkeypatch.setattr(settings, "artifact_dir", str(empty), raising=False)
+
+        response = client.get(
+            "/api/v1/admin/models", headers={"Authorization": f"Bearer {analyst_token}"}
+        )
+        assert response.status_code == 200
+        assert response.json()["trained"] is False
+
+
 class TestAuthorisation:
     ADMIN_PATHS: ClassVar[list[str]] = [
         f"{PREFIX}/admin/models",
