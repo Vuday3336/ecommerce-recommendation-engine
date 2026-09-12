@@ -1,0 +1,87 @@
+name: Scheduled retraining
+
+# Drift-triggered rather than unconditional. Retraining on a schedule regardless
+# of whether anything changed burns compute and, without a gate, random-walks
+# the production model. The pipeline checks drift first and only proceeds when
+# the distribution has genuinely moved.
+
+on:
+  schedule:
+    # 03:00 UTC daily, off the traffic peak.
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Retrain regardless of drift"
+        type: boolean
+        default: false
+
+env:
+  PYTHON_VERSION: "3.12"
+  OPENBLAS_NUM_THREADS: "1"
+
+jobs:
+  retrain:
+    name: Drift check, retrain, gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - run: pip install -r ml/requirements.txt
+
+      - name: Build the current dataset
+        run: python data-generation/generate.py --users 4000 --products 2500 --days 150 --min-events 60000
+
+      - name: Retrain behind the promotion gate
+        id: retrain
+        # Exit code 2 means "a retrain ran and the gate rejected it", which is
+        # a real signal rather than a failure: the incumbent keeps serving and
+        # someone should look at why the candidate was worse.
+        continue-on-error: true
+        run: |
+          python ml/pipelines/retrain.py \
+            ${{ inputs.force && '--force' || '' }} \
+            --out retrain-outcome.json
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Summarise
+        if: always()
+        run: |
+          python - <<'PY'
+          import json, os, pathlib
+          path = pathlib.Path("retrain-outcome.json")
+          if not path.exists():
+              print("No outcome file: the run did not reach a decision.")
+              raise SystemExit(0)
+          outcome = json.loads(path.read_text())
+          lines = [
+              "## Retraining outcome", "",
+              f"- **Triggered:** {outcome['triggered']}",
+              f"- **Reason:** {outcome['reason']}",
+              f"- **Promoted:** {outcome['promoted']}",
+          ]
+          decision = outcome.get("decision")
+          if decision:
+              lines += ["", f"**Gate: {decision['outcome']}**", ""]
+              lines += [f"- PASS {line}" for line in decision["passed"]]
+              lines += [f"- FAIL {line}" for line in decision["failed"]]
+          summary = os.environ.get("GITHUB_STEP_SUMMARY")
+          text = "\n".join(lines)
+          print(text)
+          if summary:
+              pathlib.Path(summary).write_text(text, encoding="utf-8")
+          PY
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: retrain-outcome
+          path: |
+            retrain-outcome.json
+            ml/artifacts/evaluation.csv
+          retention-days: 30

@@ -1,0 +1,31 @@
+# Prometheus configuration.
+#
+# A 15s scrape interval, not the 1m default: the recommendation latency budget
+# is measured in tens of milliseconds and an incident is usually over within a
+# minute, so minute-resolution data would show a flat line where the outage was.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    environment: local
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: recommendation-api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["backend:8000"]
+        labels:
+          service: recommendation-api

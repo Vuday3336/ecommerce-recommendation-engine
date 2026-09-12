@@ -1,0 +1,95 @@
+# Alerting rules.
+#
+# Each rule states the user-visible symptom it protects against. An alert whose
+# only description is its own expression cannot be actioned at 3am.
+
+groups:
+  - name: recommendation-availability
+    interval: 30s
+    rules:
+      - alert: RecommendationFallbackRateHigh
+        # The signal this whole project would page on. When the ranker fails,
+        # latency *improves*, errors stay at zero, and the only symptom is a
+        # slow CTR decline a week later. Fallback rate makes it immediate.
+        expr: |
+          sum(rate(recommendation_fallback_total[5m]))
+            / clamp_min(sum(rate(recommendation_requests_total[5m])), 0.001) > 0.25
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "Over 25% of recommendations are served by a degraded strategy"
+          description: >
+            The engine is falling back rather than ranking. Users still get
+            results, so nothing else will alert. Check whether the ranker
+            artefact loaded and whether the feature store is reachable.
+
+      - alert: RecommendationLatencyBudgetBreached
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le, surface) (rate(recommendation_latency_seconds_bucket[5m]))
+          ) > 0.08
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "p95 recommendation latency above the 80ms budget (NFR-01)"
+
+      - alert: RecommendationsEmpty
+        expr: sum(rate(recommendation_empty_total[10m])) > 0.1
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "Recommendation surfaces are returning empty lists"
+
+      - alert: ModelNotLoaded
+        expr: model_loaded == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "The engine has no usable model artefacts"
+
+  - name: recommendation-quality
+    interval: 60s
+    rules:
+      - alert: CacheHitRatioLow
+        expr: |
+          sum(rate(recommendation_cache_hits_total[15m]))
+            / clamp_min(
+                sum(rate(recommendation_cache_hits_total[15m]))
+                + sum(rate(recommendation_cache_misses_total[15m])), 0.001) < 0.6
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "Cache hit ratio below 60% (NFR-03 targets 80%)"
+
+      - alert: FeatureDriftAlert
+        expr: feature_drift_score{method="psi"} > 0.25
+        for: 30m
+        labels: { severity: warning }
+        annotations:
+          summary: "PSI above 0.25 on {{ $labels.feature }}"
+          description: >
+            The input distribution has moved materially from the one the
+            serving model was trained on. Two or more alerting features trigger
+            the retraining pipeline.
+
+      - alert: EventsDropped
+        expr: rate(events_dropped_total[5m]) > 0
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Events are being dropped: the ingest buffer is full"
+          description: >
+            Analytics data is being lost. The storefront is unaffected by
+            design, but training data is incomplete for this window.
+
+  - name: api-health
+    interval: 30s
+    rules:
+      - alert: ApiErrorRateHigh
+        expr: |
+          sum(rate(http_requests_total{status=~"5.."}[5m]))
+            / clamp_min(sum(rate(http_requests_total[5m])), 0.001) > 0.02
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "Over 2% of API requests are returning 5xx"

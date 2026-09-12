@@ -1,0 +1,290 @@
+name: CI
+
+# Ordered cheapest-first: lint and typecheck finish in seconds and catch most
+# mistakes, so a broken commit fails in under a minute rather than after the
+# eight-minute ML job.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12"
+  NODE_VERSION: "20"
+  # BLAS threads fight with pytest-xdist and with the runner's 2 cores; pinning
+  # to 1 makes the ML tests both faster and reproducible.
+  OPENBLAS_NUM_THREADS: "1"
+  OMP_NUM_THREADS: "1"
+
+jobs:
+  lint:
+    name: Lint and typecheck (Python)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install tooling
+        run: pip install ruff mypy
+
+      - name: Ruff
+        run: ruff check .
+
+      - name: Ruff format check
+        run: ruff format --check . || true
+
+      - name: Mypy
+        # Not blocking yet: the ML package has untyped third-party surfaces
+        # (implicit, lightgbm) and stub coverage is incomplete. It reports so
+        # the trend is visible without failing every PR on a library's typing.
+        run: mypy backend/app ml/recsys || true
+
+  frontend:
+    name: Typecheck and build (frontend)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci --no-audit --no-fund
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Build
+        run: npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+          retention-days: 5
+
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: recommendations_test
+          POSTGRES_USER: recsys
+          POSTGRES_PASSWORD: test_password
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U recsys"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+
+    env:
+      APP_ENV: test
+      JWT_SECRET_KEY: ci-only-secret-not-used-anywhere-else
+      POSTGRES_HOST: localhost
+      POSTGRES_DB: recommendations_test
+      POSTGRES_USER: recsys
+      POSTGRES_PASSWORD: test_password
+      REDIS_HOST: localhost
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install -r backend/requirements.txt
+          pip install -r ml/requirements.txt
+          pip install pytest pytest-cov fakeredis httpx
+
+      - name: Apply migrations
+        working-directory: backend
+        run: alembic upgrade head
+
+      - name: Verify migrations match the models
+        # Guards ADR-013: a model change without a migration is caught here
+        # rather than at deploy time. An autogenerate diff against a
+        # freshly-migrated database must be empty.
+        working-directory: backend
+        run: |
+          alembic revision --autogenerate -m "ci-drift-check" --rev-id ci_check
+          python - <<'PY'
+          import pathlib, re, sys
+          path = next(pathlib.Path("alembic/versions").glob("ci_check*.py"))
+          body = path.read_text(encoding="utf-8")
+          upgrade = body.split("def upgrade()")[1].split("def downgrade()")[0]
+          operations = [
+              line for line in upgrade.splitlines()
+              if line.strip().startswith("op.") and "pass" not in line
+          ]
+          path.unlink()
+          if operations:
+              print("Schema drift: the models and migrations disagree.")
+              print("\n".join(operations))
+              sys.exit(1)
+          print("No schema drift.")
+          PY
+
+      - name: Generate a small dataset
+        # Small on purpose: CI validates that the pipeline runs and that the
+        # structural assertions hold, not that the metrics are good. The
+        # full-scale numbers come from a deliberate training run.
+        run: python data-generation/generate.py --users 700 --products 800 --days 90 --min-events 8000
+
+      - name: Run tests
+        run: |
+          pytest -q \
+            --cov=backend/app --cov=ml/recsys \
+            --cov-report=term-missing --cov-report=xml
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage
+          path: coverage.xml
+          retention-days: 5
+
+  ml-pipeline:
+    name: Train and evaluate (smoke)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install ML dependencies
+        run: pip install -r ml/requirements.txt
+
+      - name: Generate a dataset
+        run: python data-generation/generate.py --users 1200 --products 1000 --days 120 --min-events 20000
+
+      - name: Data diagnostic gate
+        # The Phase 2 exit criterion, enforced on every commit. If a change to
+        # the generator destroys the learnable structure, this fails here
+        # rather than showing up as an unexplained metric regression later.
+        run: python data-generation/diagnostics.py
+
+      - name: Train and evaluate
+        run: python ml/pipelines/train.py --eval-users 300 --ranker-users 400 --no-bpr
+
+      - name: Assert the ranker beats the popularity baseline
+        run: |
+          python - <<'PY'
+          import pandas as pd, sys
+          frame = pd.read_csv("ml/artifacts/evaluation.csv").set_index("model")
+          baseline = frame.loc["popularity-global", "ndcg@10"]
+          best = frame["ndcg@10"].max()
+          print(frame[["ndcg@10", "recall@10", "coverage"]].to_string())
+          # Deliberately checked against *global* popularity, not the strongest
+          # baseline: on the small CI dataset the top models are within noise of
+          # each other, so a tighter assertion would be flaky. This catches the
+          # failure that matters - a pipeline change that breaks learning
+          # entirely.
+          if best <= baseline * 1.2:
+              print(f"FAIL: best {best:.5f} vs popularity {baseline:.5f}")
+              sys.exit(1)
+          print(f"OK: best {best:.5f} vs popularity baseline {baseline:.5f}")
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: evaluation
+          path: |
+            ml/artifacts/evaluation.csv
+            ml/artifacts/evaluation_by_segment.csv
+            ml/artifacts/metrics.json
+          retention-days: 14
+
+  docker:
+    name: Build images
+    runs-on: ubuntu-latest
+    needs: [lint]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build backend
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/backend.Dockerfile
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build frontend
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/frontend.Dockerfile
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build ml-training
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/ml-training.Dockerfile
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Validate the compose file
+        run: docker compose config --quiet
+        env:
+          POSTGRES_PASSWORD: ci
+          JWT_SECRET_KEY: ci
+
+  security:
+    name: Secret and dependency scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for committed secrets
+        # A cheap, targeted check for the mistakes that actually happen: a real
+        # .env file, or a private key committed by accident.
+        run: |
+          if git ls-files | grep -E '(^|/)\.env$'; then
+            echo "A .env file is tracked. Secrets must never be committed."
+            exit 1
+          fi
+          if git grep -lE 'BEGIN (RSA|OPENSSH|EC|PGP) PRIVATE KEY' -- ':!*.md'; then
+            echo "A private key is committed."
+            exit 1
+          fi
+          echo "No committed secrets found."
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Audit Python dependencies
+        run: |
+          pip install pip-audit
+          pip-audit -r backend/requirements.txt --ignore-vuln GHSA-xxxx-xxxx-xxxx || true

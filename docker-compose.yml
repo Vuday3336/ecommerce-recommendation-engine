@@ -1,0 +1,223 @@
+# Full local stack.
+#
+#   docker compose up -d                 data services + api + frontend
+#   docker compose --profile ops up -d   ... plus MLflow, Prometheus, Grafana
+#   docker compose run --rm ml-training python ml/pipelines/train.py --mlflow
+#   docker compose down                  stop, keep data
+#   docker compose down -v               stop and destroy data
+#
+# The application services wait on healthchecks rather than on start order, so
+# `up` does not race: the API only starts once Postgres actually answers, not
+# merely once its container exists.
+
+name: recsys
+
+x-common-env: &common-env
+  APP_ENV: ${APP_ENV:-development}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  LOG_FORMAT: ${LOG_FORMAT:-json}
+  POSTGRES_HOST: postgres
+  POSTGRES_PORT: 5432
+  POSTGRES_DB: ${POSTGRES_DB:-recommendations}
+  POSTGRES_USER: ${POSTGRES_USER:-recsys}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
+  REDIS_HOST: redis
+  REDIS_PORT: 6379
+  MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI:-http://mlflow:5000}
+
+services:
+  postgres:
+    # pgvector's own image tracks the upstream Postgres release and ships the
+    # extension prebuilt, which is why the schema can create it in a migration
+    # rather than requiring a manual install step (ADR-004).
+    image: pgvector/pgvector:pg16
+    container_name: recsys-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-recommendations}
+      POSTGRES_USER: ${POSTGRES_USER:-recsys}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
+      # Deterministic collation and encoding: index ordering and text search
+      # must not depend on the developer's host locale.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    command:
+      # Tuned for a 14 GB development machine and a 450k-event dataset. Not
+      # production values; they exist so the bulk seed and the feature
+      # aggregation queries do not spill to disk on every run.
+      - postgres
+      - -c
+      - shared_buffers=512MB
+      - -c
+      - work_mem=32MB
+      - -c
+      - maintenance_work_mem=256MB
+      - -c
+      - effective_cache_size=2GB
+      - -c
+      - max_connections=100
+      # Required for the pg_stat_statements extension created in the init hook;
+      # the extension installs without it but every query against its view fails.
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      # Log anything slower than 500 ms, so index regressions surface during
+      # development rather than in the latency dashboard later.
+      - -c
+      - log_min_duration_statement=500
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-recsys} -d ${POSTGRES_DB:-recommendations}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    container_name: recsys-redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    command:
+      - redis-server
+      # Redis holds only derived state (ADR-006), so evicting under memory
+      # pressure is the correct behaviour: drop the least-recently-used cache
+      # entry rather than refuse writes. Nothing durable lives here.
+      - --maxmemory
+      - 512mb
+      - --maxmemory-policy
+      - allkeys-lru
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  backend:
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+    container_name: recsys-backend
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY must be set in .env}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:5173,http://localhost:3000}
+      ARTIFACT_DIR: /app/ml/artifacts
+      DATASET_DIR: /app/data/synthetic
+    ports:
+      - "${API_PORT:-8000}:8000"
+    volumes:
+      # Artefacts and the dataset are mounted read-only: the API loads models,
+      # it never writes them. A serving process that can overwrite its own
+      # model is one bug away from an unreproducible incident.
+      - ./ml/artifacts:/app/ml/artifacts:ro
+      - ./data/synthetic:/app/data/synthetic:ro
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/frontend.Dockerfile
+      args:
+        VITE_API_BASE_URL: /api/v1
+    container_name: recsys-frontend
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-3000}:80"
+    depends_on:
+      - backend
+
+  ml-training:
+    build:
+      context: .
+      dockerfile: docker/ml-training.Dockerfile
+    container_name: recsys-ml-training
+    environment:
+      <<: *common-env
+    volumes:
+      - ./ml/artifacts:/app/ml/artifacts
+      - ./data:/app/data
+      - ./ml/mlruns:/app/ml/mlruns
+    depends_on:
+      postgres: { condition: service_healthy }
+    # A job, not a service: it runs to completion and exits.
+    profiles: ["training"]
+
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.16.2
+    container_name: recsys-mlflow
+    restart: unless-stopped
+    command: >
+      mlflow server
+      --host 0.0.0.0 --port 5000
+      --backend-store-uri postgresql://${POSTGRES_USER:-recsys}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-recommendations}
+      --default-artifact-root /mlflow/artifacts
+    environment:
+      MLFLOW_ALLOW_FILE_STORE: "false"
+    ports:
+      - "${MLFLOW_PORT:-5000}:5000"
+    volumes:
+      - mlflow_artifacts:/mlflow/artifacts
+    depends_on:
+      postgres: { condition: service_healthy }
+    profiles: ["ops"]
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: recsys-prometheus
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --web.enable-lifecycle
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus_data:/prometheus
+    profiles: ["ops"]
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: recsys-grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    ports:
+      - "${GRAFANA_PORT:-3001}:3000"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    profiles: ["ops"]
+
+volumes:
+  postgres_data:
+    name: recsys_postgres_data
+  redis_data:
+    name: recsys_redis_data
+  prometheus_data:
+    name: recsys_prometheus_data
+  grafana_data:
+    name: recsys_grafana_data
+  mlflow_artifacts:
+    name: recsys_mlflow_artifacts
