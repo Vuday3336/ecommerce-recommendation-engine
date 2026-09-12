@@ -1,0 +1,80 @@
+# --- Secrets -----------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# --- Python ------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+.ipynb_checkpoints/
+
+# --- ML artefacts ------------------------------------------------------------
+ml/artifacts/
+mlruns/
+mlartifacts/
+*.pkl
+*.joblib
+*.npz
+*.faiss
+data/raw/
+data/processed/
+data/snapshots/
+# The synthetic dataset is reproducible from its seed in ~30 seconds
+# (`python data-generation/generate.py`), so the Parquet files are generated,
+# not committed. The manifest is kept as a record of what was generated.
+data/synthetic/*
+!data/synthetic/manifest.json
+
+# --- Node / frontend ---------------------------------------------------------
+node_modules/
+frontend/dist/
+frontend/.vite/
+*.local
+
+# --- Infra / logs ------------------------------------------------------------
+logs/
+*.log
+pgdata/
+redisdata/
+grafana-data/
+
+# --- Editors / OS ------------------------------------------------------------
+.idea/
+.vscode/
+!.vscode/extensions.json
+.DS_Store
+Thumbs.db
+desktop.ini
+ml/artifacts.rejected/
+ml/artifacts.previous/
+ml/artifacts.staging/
+retrain-outcome.json
+
+# Local PostgreSQL data directory (scripts/local_postgres.py)
+.pgdata/
+.pgpass_init
+
+# --- Local MLflow backing store ----------------------------------------------
+# The tracking store is per-developer state, not source. Runs are reproduced by
+# re-running `ml/pipelines/train.py --mlflow`, which recreates it.
+ml/mlflow.db
+ml/mlflow.db-journal
+
+# --- Build caches -------------------------------------------------------------
+frontend/tsconfig.tsbuildinfo

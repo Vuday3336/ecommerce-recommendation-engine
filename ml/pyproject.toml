@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "recsys"
+version = "0.1.0"
+description = "Recommendation engine shared by the training pipelines and the serving API"
+requires-python = ">=3.12"
+dependencies = [
+    "numpy>=2.0",
+    "pandas>=2.2",
+    "scipy>=1.13",
+    "scikit-learn>=1.5",
+    "implicit>=0.7.2",
+    "lightgbm>=4.3",
+    "xgboost>=2.0",
+    "pyarrow>=15",
+]
+
+[project.optional-dependencies]
+embeddings = ["sentence-transformers>=3.0"]
+tracking = ["mlflow>=2.14"]
+
+[tool.setuptools.packages.find]
+include = ["recsys*"]

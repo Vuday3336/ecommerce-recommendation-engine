@@ -1,0 +1,21 @@
+# Training-image dependencies: everything the backend needs plus the tooling
+# only training uses (XGBoost for the ADR-005 control, MLflow for tracking).
+
+numpy>=2.0,<3
+pandas>=2.2,<4
+scipy>=1.13,<2
+scikit-learn>=1.5,<2
+implicit>=0.7.2,<1
+lightgbm>=4.3,<5
+xgboost>=2.0,<4
+pyarrow>=15
+joblib>=1.4
+
+mlflow>=2.14,<4
+psycopg2-binary>=2.9.9,<3
+sqlalchemy>=2.0.30,<2.1
+
+# Optional: transformer embeddings. Left out of the default image because it
+# pulls ~2.5 GB of Torch for a backend that computes embeddings in a batch job
+# and never loads the model at serve time (ADR ContentConfig).
+# sentence-transformers>=3.0
