@@ -66,6 +66,47 @@ Measure the serving path afterwards:
 python scripts/benchmark_serving.py
 ```
 
+### When the local server is up but nothing can reach it
+
+Specific to Windows, and worth knowing because it does not look like what it
+is. Symptom: `status` says running, but every client hangs until its connect
+timeout, and the test suite reports `no PostgreSQL reachable` after several
+minutes instead of several seconds.
+
+The cause is in `.pgdata/server.log`:
+
+```
+could not reserve shared memory region (addr=...) error code 487
+```
+
+Windows has no `fork`, so PostgreSQL starts each backend by re-executing the
+postmaster and re-mapping the shared memory segment at the same address in the
+new process. If anything else has taken that address - ASLR, or a DLL injected
+by antivirus - the backend cannot start. The postmaster stays healthy and keeps
+**accepting** connections it can never service, which is why clients hang
+rather than being refused.
+
+Two things in `scripts/local_postgres.py` address it:
+
+- `shared_buffers` is 128MB on Windows and 512MB elsewhere. A smaller segment
+  is easier to place, and this failure gets much more likely as it grows.
+- `status` and `start` execute a real query rather than checking a pid.
+  `pg_ctl status` reports success for a server in this state, so a pid check
+  reports a completely unusable database as healthy - the worst kind of health
+  check. When the query fails, the log is read and the explanation printed.
+
+The fix is to restart; a fresh process usually gets a usable address:
+
+```bash
+python scripts/local_postgres.py stop && python scripts/local_postgres.py start
+```
+
+If `stop` also fails, that is the same bug - a clean shutdown needs a backend
+it cannot fork. `stop` escalates to `-m immediate` automatically; if even that
+fails, end the `postgres.exe` process. Nothing is lost: PostgreSQL recovers
+from the WAL, and the dataset reloads in 17 seconds with
+`python scripts/seed_database.py --truncate`.
+
 ### Required configuration
 
 Copy `.env.example` to `.env` and set at minimum:
