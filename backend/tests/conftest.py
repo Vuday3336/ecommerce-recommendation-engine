@@ -48,7 +48,6 @@ def _redis_for_the_application():
     builds the application and its lifespan calls `get_redis()`.
     """
     import fakeredis
-
     from app.cache.client import set_redis
 
     set_redis(fakeredis.FakeRedis(decode_responses=True))
