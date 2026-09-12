@@ -33,6 +33,29 @@ def artifacts_available() -> bool:
     return (REPO_ROOT / "ml" / "artifacts" / "popularity.joblib").exists()
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _redis_for_the_application():
+    """Give the application a Redis for the whole session.
+
+    Until this existed, `fake_redis` was wired only into the `RealTimeCounters`
+    unit tests, and the application under test had no cache at all - so every
+    request took the "Redis unavailable" branch and the entire cached serving
+    path was never executed locally. CI runs a real Redis service, so the path
+    ran only there, which is where it was eventually found to raise on every
+    cached surface.
+
+    Autouse and session-scoped so it is installed before the `app` fixture
+    builds the application and its lifespan calls `get_redis()`.
+    """
+    import fakeredis
+
+    from app.cache.client import set_redis
+
+    set_redis(fakeredis.FakeRedis(decode_responses=True))
+    yield
+    set_redis(None)
+
+
 @pytest.fixture(scope="session")
 def app(artifacts_available):
     """The real application, built once for the whole session.

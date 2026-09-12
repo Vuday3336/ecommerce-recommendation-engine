@@ -415,7 +415,13 @@ class RecommendationService:
             ],
         }
         try:
-            self.redis.setex(key, ttl + STALE_GRACE_SECONDS, json.dumps(payload))
+            # `set(..., ex=)` rather than `setex`: redis-py deprecated `setex`,
+            # and this project turns DeprecationWarning from `app.*` into an
+            # error (see `filterwarnings` in pyproject.toml). That combination
+            # made every cached surface return 500 the moment a real Redis was
+            # reachable - invisible locally, where Redis is usually absent and
+            # this line never executes, and caught by CI, which runs one.
+            self.redis.set(key, json.dumps(payload), ex=ttl + STALE_GRACE_SECONDS)
         except (RedisError, OSError, TypeError):
             metrics.cache_errors_total.inc()
 
